@@ -1,17 +1,19 @@
-[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$DefaultVaultRoot = Split-Path -Parent $ScriptRoot
-
 param(
     [string]$Date = (Get-Date -Format 'yyyy-MM-dd'),
     [switch]$DryRun,
     [string]$SessionsRoot = 'C:\Users\33055\.codex\sessions',
     [string]$SessionIndex = 'C:\Users\33055\.codex\session_index.jsonl',
-    [string]$VaultRoot = $DefaultVaultRoot,
+    [string]$VaultRoot = '',
     [int]$MinScore = 6,
     [int]$MaxItems = 12
 )
+
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $VaultRoot) {
+    $VaultRoot = Split-Path -Parent $ScriptRoot
+}
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -543,6 +545,62 @@ function Ensure-DailyNote {
     [System.IO.File]::WriteAllText($NotePath, $content, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Get-DailyNotesDirectory {
+    param([string]$VaultPath)
+
+    $inboxDir = Get-ChildItem -LiteralPath $VaultPath -Directory |
+        Where-Object { $_.Name -like '00-*' } |
+        Sort-Object Name |
+        Select-Object -First 1
+
+    if (-not $inboxDir) {
+        throw "Could not find inbox directory under '$VaultPath'."
+    }
+
+    $dailyDir = Get-ChildItem -LiteralPath $inboxDir.FullName -Directory |
+        Where-Object {
+            $_.Name -like '*record*' -or
+            (Get-ChildItem -LiteralPath $_.FullName -Filter '20??-??-?? - *.md' -ErrorAction SilentlyContinue | Select-Object -First 1)
+        } |
+        Sort-Object Name |
+        Select-Object -First 1
+
+    if (-not $dailyDir) {
+        $dailyDir = Join-Path $inboxDir.FullName 'DailyRecords'
+    }
+    else {
+        $dailyDir = $dailyDir.FullName
+    }
+
+    return $dailyDir
+}
+
+function Get-DailyNotePath {
+    param(
+        [string]$DailyNotesDirectory,
+        [string]$TargetDate
+    )
+
+    $existing = Get-ChildItem -LiteralPath $DailyNotesDirectory -Filter ($TargetDate + ' - *.md') -ErrorAction SilentlyContinue |
+        Sort-Object Name |
+        Select-Object -First 1
+
+    if ($existing) {
+        return $existing.FullName
+    }
+
+    $template = Get-ChildItem -LiteralPath $DailyNotesDirectory -Filter '20??-??-?? - *.md' -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        Select-Object -First 1
+
+    if ($template) {
+        $suffix = $template.Name.Substring(10)
+        return (Join-Path $DailyNotesDirectory ($TargetDate + $suffix))
+    }
+
+    return (Join-Path $DailyNotesDirectory ($TargetDate + ' - Pending.md'))
+}
+
 function Build-AutoSection {
     param([object[]]$Exchanges)
 
@@ -625,7 +683,8 @@ if ($DryRun) {
     return
 }
 
-$notePath = Join-Path $VaultRoot ('00-收件箱\每日记录\{0} - 待整理.md' -f $Date)
+$dailyNotesDirectory = Get-DailyNotesDirectory -VaultPath $VaultRoot
+$notePath = Get-DailyNotePath -DailyNotesDirectory $dailyNotesDirectory -TargetDate $Date
 Ensure-DailyNote -NotePath $notePath -TargetDate $Date
 Upsert-AutoSection -NotePath $notePath -AutoSection $autoSection
 Write-Output ('Wrote {0} candidate items to: {1}' -f $selectedExchanges.Count, $notePath)
