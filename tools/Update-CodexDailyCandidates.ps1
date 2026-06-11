@@ -550,23 +550,41 @@ function Get-DailyNotesDirectory {
 
     $inboxDir = Get-ChildItem -LiteralPath $VaultPath -Directory |
         Where-Object { $_.Name -like '00-*' } |
-        Sort-Object Name |
+        ForEach-Object {
+            [pscustomobject]@{
+                Directory = $_
+                NoteCount = @(
+                    Get-ChildItem -LiteralPath $_.FullName -Recurse -Filter '20??-??-?? - *.md' -ErrorAction SilentlyContinue
+                ).Count
+            }
+        } |
+        Sort-Object @{ Expression = 'NoteCount'; Descending = $true }, @{ Expression = { $_.Directory.Name } } |
         Select-Object -First 1
 
     if (-not $inboxDir) {
         throw "Could not find inbox directory under '$VaultPath'."
     }
 
-    $dailyDir = Get-ChildItem -LiteralPath $inboxDir.FullName -Directory |
+    $inboxPath = $inboxDir.Directory.FullName
+    $dailyDir = Get-ChildItem -LiteralPath $inboxPath -Directory |
         Where-Object {
             $_.Name -like '*record*' -or
             (Get-ChildItem -LiteralPath $_.FullName -Filter '20??-??-?? - *.md' -ErrorAction SilentlyContinue | Select-Object -First 1)
         } |
-        Sort-Object Name |
+        ForEach-Object {
+            [pscustomobject]@{
+                Directory = $_
+                NoteCount = @(
+                    Get-ChildItem -LiteralPath $_.FullName -Filter '20??-??-?? - *.md' -ErrorAction SilentlyContinue
+                ).Count
+            }
+        } |
+        Sort-Object @{ Expression = 'NoteCount'; Descending = $true }, @{ Expression = { $_.Directory.Name } } |
+        ForEach-Object { $_.Directory } |
         Select-Object -First 1
 
     if (-not $dailyDir) {
-        $dailyDir = Join-Path $inboxDir.FullName 'DailyRecords'
+        $dailyDir = Join-Path $inboxPath 'DailyRecords'
     }
     else {
         $dailyDir = $dailyDir.FullName
